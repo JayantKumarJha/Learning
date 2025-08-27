@@ -1,61 +1,51 @@
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
 import pandas as pd
+import streamlit as st
+import gspread
+import pandas as pd
+from google.oauth2.service_account import Credentials
 
-st.set_page_config(page_title="Production Summary", layout="wide")
-
-# --- 1. Load credentials from .streamlit/secrets.toml ---
-creds_dict = st.secrets["gcp_service_account"]
-creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-
-# --- 2. Connect to Google Sheets ---
+# --- Google Sheets Authentication ---
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
 gc = gspread.authorize(creds)
 
-# Replace these with your actual sheet URLs
-A_link = "https://docs.google.com/spreadsheets/d/1r6BvQzRE_vYMegpxhOl-0AU0cix4wOLVDc_035eOUsA/edit?gid=0#gid=0"
-B_link = "https://docs.google.com/spreadsheets/d/1r6BvQzRE_vYMegpxhOl-0AU0cix4wOLVDc_035eOUsA/edit?gid=801337031#gid=801337031"
-C_link = "https://docs.google.com/spreadsheets/d/1r6BvQzRE_vYMegpxhOl-0AU0cix4wOLVDc_035eOUsA/edit?gid=1333453642#gid=1333453642"
-D_link = "https://docs.google.com/spreadsheets/d/1r6BvQzRE_vYMegpxhOl-0AU0cix4wOLVDc_035eOUsA/edit?gid=9246028#gid=9246028"
+# --- Your Google Sheet link (embed it here) ---
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1r6BvQzRE_vYMegpxhOl-0AU0cix4wOLVDc_035eOUsA/edit?usp=sharing"
 
-# --- 3. Read data from the first 3 sheets ---
-def read_sheet(sheet_url):
-    sh = gc.open_by_url(sheet_url)
-    ws = sh.sheet1
-    data = ws.get_all_records()
-    return pd.DataFrame(data)
+# --- Cached read function (refreshes every 5 minutes) ---
+@st.cache_data(ttl=300)
+def read_data():
+    sh = gc.open_by_url(SHEET_URL)
 
-df_A = read_sheet(A_link)
-df_B = read_sheet(B_link)
-df_C = read_sheet(C_link)
+    df_A = pd.DataFrame(sh.worksheet("Sheet1").get_all_records())
+    df_B = pd.DataFrame(sh.worksheet("Sheet2").get_all_records())
+    df_C = pd.DataFrame(sh.worksheet("Sheet3").get_all_records())
 
-# --- 4. Calculate daily averages ---
-def calculate_daily_average(df):
-    df["Date"] = pd.to_datetime(df["Date"])
-    avg_df = df.groupby("Date").mean().reset_index()
-    return avg_df
+    return df_A, df_B, df_C, sh
 
-avg_A = calculate_daily_average(df_A)
-avg_B = calculate_daily_average(df_B)
-avg_C = calculate_daily_average(df_C)
+# --- App main ---
+st.title("📊 Plant Production Dashboard")
 
-# --- 5. Combine results ---
-summary = (
-    pd.concat([avg_A.assign(Plant="A"),
-               avg_B.assign(Plant="B"),
-               avg_C.assign(Plant="C")])
-    .reset_index(drop=True)
-)
+df_A, df_B, df_C, sh = read_data()
 
-# --- 6. Write summary to the 4th sheet ---
-def write_to_summary(sheet_url, df):
-    sh = gc.open_by_url(sheet_url)
-    ws = sh.sheet1
-    ws.clear()
-    ws.update([df.columns.values.tolist()] + df.values.tolist())
+# Calculate summaries
+summary_A = df_A.mean(numeric_only=True)
+summary_B = df_B.mean(numeric_only=True)
+summary_C = df_C.mean(numeric_only=True)
 
-write_to_summary(D_link, summary)
+summary_df = pd.DataFrame({
+    "Plant": ["Plant A", "Plant B", "Plant C"],
+    "Daily Avg": [summary_A.mean(), summary_B.mean(), summary_C.mean()]
+})
 
-# --- 7. Show in Streamlit UI ---
-st.title("📊 Production Summary")
-st.dataframe(summary)
+# Show results in app
+st.subheader("Daily Average Production")
+st.dataframe(summary_df)
+
+# --- Write to Sheet4 ---
+worksheet_summary = sh.worksheet("Sheet4")
+worksheet_summary.clear()
+worksheet_summary.update([summary_df.columns.values.tolist()] + summary_df.values.tolist())
+
+st.success("✅ Summary written to Sheet4 successfully")
+
